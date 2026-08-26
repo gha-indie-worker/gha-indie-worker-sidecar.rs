@@ -1,0 +1,4 @@
+name = "gha-indie-worker-sidecar.rs"
+kind = "sidecar"
+version = "0.1.0"
+
