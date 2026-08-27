@@ -24,7 +24,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "ores-otel-sidecar"
 version = "0.1.0"
-source = "git+https://github.com/ores-otel/ores-otel-sidecar.rs?rev=7bad27a602c6a3ad88d4ed382ee82e9fecf07e6f#7bad27a602c6a3ad88d4ed382ee82e9fecf07e6f"
+source = "git+https://github.com/ores-otel/ores-otel-sidecar.rs?rev=fed785ad9a638e24d458e0f2acd390624e4e748d#fed785ad9a638e24d458e0f2acd390624e4e748d"
 dependencies = [
  "serde",
  "serde_json",

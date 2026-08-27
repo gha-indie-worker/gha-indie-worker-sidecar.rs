@@ -12,7 +12,7 @@ name = "ghaiw-sidecar"
 path = "src/main.rs"
 
 [dependencies]
-ores-otel-sidecar = { git = "https://github.com/ores-otel/ores-otel-sidecar.rs", rev = "7bad27a602c6a3ad88d4ed382ee82e9fecf07e6f" }
+ores-otel-sidecar = { git = "https://github.com/ores-otel/ores-otel-sidecar.rs", rev = "fed785ad9a638e24d458e0f2acd390624e4e748d" }
 
 
 [lints.rust]
