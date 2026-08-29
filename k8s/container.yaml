@@ -2,6 +2,7 @@
 # Loopback only — do not add a Service port for 9090.
 # Liveness is exec so kubelet does not need to reach 127.0.0.1:9090.
 # No readinessProbe: the sidecar is a probe helper, not a serving container.
+# Binary path matches ores-otel/ores-otel-sidecar.rs/k8s/container.yaml.
 - name: otel-sidecar
   image: ghaiw-sidecar:latest
   imagePullPolicy: IfNotPresent
@@ -19,7 +20,7 @@
       drop: ["ALL"]
   livenessProbe:
     exec:
-      command: ["/usr/local/bin/ghaiw-sidecar", "probe"]
+      command: ["/ghaiw-sidecar", "probe"]
     periodSeconds: 10
     timeoutSeconds: 2
     failureThreshold: 3
