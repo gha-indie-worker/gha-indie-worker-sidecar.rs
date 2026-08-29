@@ -1,0 +1,25 @@
+# Pair this container with the app in the same pod.
+# Loopback only — do not add a Service port for 9090.
+# Liveness is exec so kubelet does not need to reach 127.0.0.1:9090.
+# No readinessProbe: the sidecar is a probe helper, not a serving container.
+- name: otel-sidecar
+  image: ghaiw-sidecar:latest
+  imagePullPolicy: IfNotPresent
+  env:
+    - name: GHA_INDIE_WORKER_SIDECAR_BIND
+      value: "127.0.0.1:9090"
+    - name: ORES_OTEL_SIDECAR_BIND
+      value: "127.0.0.1:9090"
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    capabilities:
+      drop: ["ALL"]
+  livenessProbe:
+    exec:
+      command: ["/usr/local/bin/ghaiw-sidecar", "probe"]
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
