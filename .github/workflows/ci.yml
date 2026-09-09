@@ -13,10 +13,15 @@ concurrency:
   group: ghaiw-sidecar-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  INTERFACES_REVISION: a789f2985b762ba1980bf0030451ef4c4018117b
+  TJSV_REVISION: a4b731fbf82c4d162abd74fd03758fa32bb76176
+  TJSV_PACKAGE: https://github.com/ORESoftware/typespec-json-schema-validator/archive/a4b731fbf82c4d162abd74fd03758fa32bb76176.tar.gz
+
 jobs:
   rust:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -25,10 +30,42 @@ jobs:
           persist-credentials: false
           show-progress: false
 
-      - name: Verify exact candidate revision
+      - name: Check out admitted interface authority
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: gha-indie-worker/gha-indie-worker-interfaces
+          ref: ${{ env.INTERFACES_REVISION }}
+          path: contract-authority
+          persist-credentials: false
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Verify exact candidate and authority revisions
         env:
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git -C contract-authority rev-parse HEAD)" = "$INTERFACES_REVISION"
+
+      - name: Set up Node 22 for TJSV and cross-runtime vectors
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+
+      - name: Re-admit pinned TypeSpec and JSON Schema authorities with TJSV
+        run: |
+          set -euo pipefail
+          mkdir -p target/tjsv
+          npx --yes --package="$TJSV_PACKAGE" tjsv check \
+            --typespec=contract-authority/contracts/build-log-stream/main.tsp \
+            --schema=contract-authority/contracts/build-log-stream/authored.schema.json \
+            --instances=contract-authority/contracts/build-log-stream/instances \
+            --report=target/tjsv/report.json \
+            --output-dir=target/tjsv/generated-schema-b \
+            --max-probes=256 \
+            --int64-strategy=number \
+            --seal-object-schemas=true
 
       - name: Report Rust toolchain
         run: |
@@ -52,31 +89,120 @@ jobs:
       - name: Test all Rust targets
         run: cargo test --locked --all-targets
 
-      - name: Exercise stdin plus FD3 receiver protocol
+      - name: Exercise admitted FD0 plus FD3 vectors across Node and Rust
         shell: bash
         run: |
           set -euo pipefail
           cargo build --locked --bin ghaiw-sidecar
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const os = require('node:os');
+          const path = require('node:path');
+          const { spawn } = require('node:child_process');
+          const assert = require('node:assert/strict');
 
-          python3 - <<'PY' >"$tmp/frames.bin"
-          import sys
-          def frame(stream, data):
-              sys.stdout.buffer.write(b"GHLG" + bytes([1, stream]) + len(data).to_bytes(4, "big") + data)
-          frame(1, b"live-out\n")
-          frame(2, b"live-err\n")
-          PY
+          const root = path.join(
+            'contract-authority',
+            'contracts',
+            'build-log-stream',
+            'instances'
+          );
+          const started = JSON.parse(fs.readFileSync(
+            path.join(root, 'LogSidecarCommandStarted', 'valid', 'command-started.json'),
+            'utf8'
+          ));
+          const metadata = Buffer.from(JSON.stringify(started) + '\n');
 
-          GHAIW_LOG_SIDECAR_PROTOCOL=gha-indie-worker.log-sidecar.v1 \
-          GHAIW_LOG_SIDECAR_METADATA_FD=3 \
-            ./target/debug/ghaiw-sidecar \
-            3< <(printf '%s\n' '{"schemaVersion":"gha-indie-worker.log-sidecar.v1","event":"command_started"}') \
-            <"$tmp/frames.bin" >"$tmp/stdout" 2>"$tmp/stderr"
+          function runReceiver(wire, withMetadata = true) {
+            return new Promise((resolve, reject) => {
+              // Node implements an extra `stdio: 'pipe'` slot with a socketpair.
+              // The production worker supplies a real Unix pipe on FD3, and the
+              // safe Rust receiver reopens /dev/fd/3. Use a real readable file
+              // descriptor here rather than changing production semantics merely
+              // to accommodate Node's socketpair implementation.
+              const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghaiw-fd3-'));
+              const metadataPath = path.join(tempDir, 'metadata.ndjson');
+              fs.writeFileSync(metadataPath, withMetadata ? metadata : Buffer.alloc(0));
+              const metadataFd = fs.openSync(metadataPath, 'r');
 
-          test "$(cat "$tmp/stdout")" = "live-out"
-          grep -Fx 'live-err' "$tmp/stderr"
-          grep -F '[ghaiw-meta] {"schemaVersion":"gha-indie-worker.log-sidecar.v1","event":"command_started"}' "$tmp/stderr"
+              const child = spawn('./target/debug/ghaiw-sidecar', [], {
+                env: {
+                  PATH: process.env.PATH,
+                  GHAIW_LOG_SIDECAR_PROTOCOL: 'gha-indie-worker.log-sidecar.v1',
+                  GHAIW_LOG_SIDECAR_METADATA_FD: '3',
+                },
+                stdio: ['pipe', 'pipe', 'pipe', metadataFd],
+              });
+              fs.closeSync(metadataFd);
+
+              const stdout = [];
+              const stderr = [];
+              child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
+              child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+              child.on('error', (error) => {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                reject(error);
+              });
+              child.on('close', (code, signal) => {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+                resolve({
+                  code,
+                  signal,
+                  stdout: Buffer.concat(stdout),
+                  stderr: Buffer.concat(stderr),
+                });
+              });
+              child.stdin.end(wire);
+            });
+          }
+
+          function containsBuffer(haystack, needle) {
+            return haystack.indexOf(needle) >= 0;
+          }
+
+          (async () => {
+            const validDir = path.join(root, 'LogSidecarWireVector', 'valid');
+            for (const name of fs.readdirSync(validDir).sort()) {
+              if (!name.endsWith('.json')) continue;
+              const vector = JSON.parse(fs.readFileSync(path.join(validDir, name), 'utf8'));
+              const wire = Buffer.from(vector.wireHex, 'hex');
+              const payload = Buffer.from(vector.payloadHex, 'hex');
+              const result = await runReceiver(wire);
+              assert.equal(result.code, 0, `${name}: receiver exit`);
+              assert.equal(result.signal, null, `${name}: receiver signal`);
+              if (vector.frame.stream === 'stdout') {
+                assert.deepEqual(result.stdout, payload, `${name}: stdout payload`);
+              } else {
+                assert.equal(result.stdout.length, 0, `${name}: unexpected stdout`);
+                assert.ok(containsBuffer(result.stderr, payload), `${name}: stderr payload missing`);
+              }
+              assert.ok(
+                containsBuffer(result.stderr, Buffer.from('[ghaiw-meta] ' + JSON.stringify(started))),
+                `${name}: FD3 metadata missing`
+              );
+            }
+
+            const invalidDir = path.join(root, 'LogSidecarWireVector', 'invalid');
+            for (const name of fs.readdirSync(invalidDir).sort()) {
+              if (!name.endsWith('.json')) continue;
+              const vector = JSON.parse(fs.readFileSync(path.join(invalidDir, name), 'utf8'));
+              const result = await runReceiver(Buffer.from(vector.wireHex, 'hex'), false);
+              assert.notEqual(result.code, 0, `${name}: invalid vector was accepted`);
+            }
+          })().catch((error) => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
 
       - name: Test optimized build
         run: cargo test --locked --all-targets --release
+
+      - name: Upload TJSV consumer evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sidecar-tjsv-${{ github.sha }}
+          path: target/tjsv/
+          if-no-files-found: error
+          retention-days: 30
