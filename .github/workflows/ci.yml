@@ -15,7 +15,7 @@ concurrency:
 
 env:
   INTERFACES_REVISION: e985286cac2feb12d073a8bff4acd65a9a030664
-  TJSV_REVISION: e609e1973fcdcfaeecbdfa2dcbfde75c55286ff7
+  TJSV_REVISION: a4b731fbf82c4d162abd74fd03758fa32bb76176
 
 jobs:
   rust:
