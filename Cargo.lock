@@ -13,7 +13,7 @@ dependencies = [
 [[package]]
 name = "gha-indie-worker-interfaces"
 version = "0.1.0"
-source = "git+https://github.com/gha-indie-worker/gha-indie-worker-interfaces?rev=e985286cac2feb12d073a8bff4acd65a9a030664#e985286cac2feb12d073a8bff4acd65a9a030664"
+source = "git+https://github.com/gha-indie-worker/gha-indie-worker-interfaces?rev=7165a361462e624195e91cf88ec472b7d6e9c1da#7165a361462e624195e91cf88ec472b7d6e9c1da"
 dependencies = [
  "serde",
  "serde_json",
