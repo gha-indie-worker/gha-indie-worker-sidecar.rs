@@ -187,13 +187,8 @@ where
             continue;
         };
 
-        let (owned, truncated) = prepare_chunk(
-            input,
-            stream,
-            current_sequence,
-            &mut prepared,
-            &mut redact,
-        );
+        let (owned, truncated) =
+            prepare_chunk(input, stream, current_sequence, &mut prepared, &mut redact);
         if truncated {
             report.truncated_exports = report.truncated_exports.saturating_add(1);
         }
@@ -284,13 +279,8 @@ where
             continue;
         };
 
-        let (owned, truncated) = prepare_chunk(
-            input,
-            stream,
-            current_sequence,
-            &mut prepared,
-            &mut redact,
-        );
+        let (owned, truncated) =
+            prepare_chunk(input, stream, current_sequence, &mut prepared, &mut redact);
         if truncated {
             report.truncated_exports = report.truncated_exports.saturating_add(1);
         }
@@ -356,7 +346,10 @@ mod tests {
 
     #[test]
     fn production_drain_deadline_is_eight_seconds() {
-        assert_eq!(DecoupledTeeConfig::default().drain_timeout, Duration::from_secs(8));
+        assert_eq!(
+            DecoupledTeeConfig::default().drain_timeout,
+            Duration::from_secs(8)
+        );
     }
 
     #[test]
@@ -601,7 +594,10 @@ mod tests {
 
     impl Write for FailingWriter {
         fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(io::ErrorKind::BrokenPipe, "native mirror failed"))
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "native mirror failed",
+            ))
         }
 
         fn flush(&mut self) -> io::Result<()> {
