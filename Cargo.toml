@@ -7,13 +7,16 @@ description = "Sidecar for GHA Indie Worker."
 repository = "https://github.com/gha-indie-worker/gha-indie-worker-sidecar.rs"
 readme = "README.md"
 
+[lib]
+name = "gha_indie_worker_sidecar"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ghaiw-sidecar"
 path = "src/main.rs"
 
 [dependencies]
 ores-otel-sidecar = { git = "https://github.com/ores-otel/ores-otel-sidecar.rs", rev = "fed785ad9a638e24d458e0f2acd390624e4e748d" }
-
 
 [lints.rust]
 unsafe_code = "forbid"
