@@ -53,7 +53,9 @@ fn parse_fd(name: &str, default_fd: i32) -> io::Result<u32> {
         .transpose()?
         .unwrap_or(default_fd);
     if !(3..=MAX_INHERITED_FD).contains(&fd) {
-        return Err(invalid_data("inherited descriptor is outside the allowed range"));
+        return Err(invalid_data(
+            "inherited descriptor is outside the allowed range",
+        ));
     }
     Ok(fd)
 }
