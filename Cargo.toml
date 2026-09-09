@@ -16,6 +16,7 @@ name = "ghaiw-sidecar"
 path = "src/main.rs"
 
 [dependencies]
+gha-indie-worker-interfaces = { git = "https://github.com/gha-indie-worker/gha-indie-worker-interfaces", rev = "06280061a76f1ed22d16863d941eb5c6fae8f859" }
 ores-otel-sidecar = { git = "https://github.com/ores-otel/ores-otel-sidecar.rs", rev = "fed785ad9a638e24d458e0f2acd390624e4e748d" }
 
 [lints.rust]
