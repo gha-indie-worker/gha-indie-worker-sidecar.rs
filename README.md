@@ -21,13 +21,19 @@ child stdout/stderr
         v
   Rust tee adapter
      /       \
-    /         +--> redact + bound + contract envelope --> local OTLP/collector --> central log store
+    /         +--> redact + bound --> bounded queue --> receiver/sidecar --> local OTLP/collector --> central log store
    v
 original stdout/stderr --> GitHub Actions native log stream
 ```
 
-`log_tee::tee_stream` mirrors the original bytes first and flushes them to the caller-owned GitHub stream. A separate prepared copy is passed through the caller's redactor and then to an exporter callback. Export failures are counted but fail open for the build; native read/write failures remain fatal. Both the read chunk and exported copy are bounded, and each stdout/stderr stream receives a monotonic sequence number.
+The production worker path should use `log_tee::tee_stream_decoupled`. Every source chunk is written and flushed to the caller-owned GitHub stdout/stderr **before** redaction or queue work. The export copy is separately redacted, bounded, moved onto a finite queue, and handled by a receiver thread. Queue saturation, receiver errors, receiver crashes, and a wedged receiver are observability failures only: export chunks may be dropped, but they cannot apply backpressure to GitHub's native log stream.
 
-The cross-runtime event authority is `GitHubActionsBuildLogEvent` in [`ores-otel/ores-interfaces`](https://github.com/ores-otel/ores-interfaces). Its independently authored TypeSpec and JSON Schema Draft 2020-12 authorities are admitted with [`ORESoftware/typespec-json-schema-validator`](https://github.com/ORESoftware/typespec-json-schema-validator) before consumers should publish events.
+At EOF the receiver gets at most `MAX_EXPORT_DRAIN` (**8 seconds**) to drain. After that the receiver thread is detached and the build is allowed to finish. The report exposes enqueued, attempted, failed, dropped, and truncated export counts plus disconnect/panic/timeout state. Sequence gaps are therefore observable downstream; exhausting the `u32` sequence domain disables further export without failing native logging.
 
-For GitHub-hosted runners, run the collector as a service container or background process and use this tee path inside the job. For self-hosted runners, runner job hooks can additionally own collector startup/shutdown. Completed GitHub job/run logs are a reconciliation/backfill lane rather than the live transport.
+`log_tee::tee_stream` remains as a synchronous primitive for tests or an exporter already proven non-blocking. It must not be used for an arbitrary user-defined receiver process because a blocking callback would become build backpressure.
+
+The cross-runtime event authority is `GitHubActionsBuildLogEvent` in [`ores-otel/ores-interfaces`](https://github.com/ores-otel/ores-interfaces). Its independently authored TypeSpec and JSON Schema Draft 2020-12 authorities are admitted fail-closed with [`ORESoftware/typespec-json-schema-validator`](https://github.com/ORESoftware/typespec-json-schema-validator). The admitted contract carries immutable GitHub run/job identity, `stdout`/`stderr`, `u32` sequence, bounded text, redaction/truncation flags, and optional trace/span linkage. Generated TypeSpec JSON Schema is comparison evidence only, never a third authority.
+
+For GitHub-hosted runners, run the collector as a service container or background process and use this tee path inside the job. For self-hosted runners, runner job hooks can additionally own receiver startup/shutdown. A future executable receiver adapter may expose separate metadata/data pipes or file descriptors, but it must preserve the same bounded-queue and eight-second shutdown rules rather than coupling arbitrary receiver I/O directly to the native stream.
+
+Completed GitHub job/run logs are a reconciliation/backfill lane rather than the live transport.
