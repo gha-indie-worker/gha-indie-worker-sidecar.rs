@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  INTERFACES_REVISION: e985286cac2feb12d073a8bff4acd65a9a030664
+  INTERFACES_REVISION: 7165a361462e624195e91cf88ec472b7d6e9c1da
   TJSV_REVISION: a4b731fbf82c4d162abd74fd03758fa32bb76176
 
 jobs:
