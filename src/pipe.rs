@@ -105,7 +105,8 @@ where
                 "invalid log-sidecar stream id",
             ));
         }
-        let frame_len = u32::from_be_bytes(header[6..10].try_into().expect("fixed header")) as usize;
+        let frame_len =
+            u32::from_be_bytes(header[6..10].try_into().expect("fixed header")) as usize;
         if frame_len > MAX_FRAME_BYTES {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -172,7 +173,13 @@ mod tests {
 
         assert_eq!(stdout, b"hello\n");
         assert_eq!(stderr, vec![0xff, 0x00, b'\n']);
-        assert_eq!(stats, CopyStats { frames: 2, bytes: 9 });
+        assert_eq!(
+            stats,
+            CopyStats {
+                frames: 2,
+                bytes: 9
+            }
+        );
     }
 
     #[test]
@@ -206,9 +213,6 @@ mod tests {
             &mut output,
         )
         .unwrap();
-        assert_eq!(
-            output,
-            b"[ghaiw-meta] {\"event\":\"command_started\"}\n"
-        );
+        assert_eq!(output, b"[ghaiw-meta] {\"event\":\"command_started\"}\n");
     }
 }
