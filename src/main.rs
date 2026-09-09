@@ -2,6 +2,7 @@
 
 #[path = "../generated/rust/env.rs"]
 mod env;
+#[allow(clippy::match_like_matches_macro)]
 #[path = "../generated/rust/runtime.rs"]
 mod env_runtime;
 mod pipe;
