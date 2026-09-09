@@ -36,7 +36,10 @@ jobs:
           cargo --version
 
       - name: Authored Rust formatting is clean
-        run: rustfmt --edition 2021 --check src/lib.rs src/log_tee.rs src/main.rs src/pipe.rs
+        # main.rs path-imports read-only generated flags2env output. Keep rustfmt
+        # on authored sources without recursively treating generated artifacts as
+        # hand-maintained code.
+        run: rustfmt --edition 2021 --check --config skip_children=true src/lib.rs src/log_tee.rs src/main.rs src/pipe.rs
 
       - name: Authored Rust Clippy is warning-free
         run: |
