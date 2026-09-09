@@ -164,10 +164,8 @@ where
         let metadata = BuildLogMetadata::parse_json_line(text)
             .map_err(|_| invalid_data("build-log metadata failed contract validation"))?;
 
-        stderr.write_all(b"[indiebuild-meta] ")?;
-        stderr.write_all(&line)?;
-        stderr.flush()?;
-
+        // FD3 is a control-plane lane. Do not echo metadata into stdout/stderr:
+        // those output lanes must contain only the exact bytes read from FD4.
         match metadata.event {
             BuildLogEvent::Chunk => {
                 if metadata.stream == BuildLogStream::Worker {
@@ -307,8 +305,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(stdout, b"hello\n");
-        assert!(stderr.ends_with(&[0xff, 0x00, b'\n']));
-        assert!(String::from_utf8_lossy(&stderr).contains("[indiebuild-meta]"));
+        assert_eq!(stderr, vec![0xff, 0x00, b'\n']);
         assert_eq!(
             stats,
             CopyStats {
