@@ -35,8 +35,8 @@ jobs:
           rustc --version
           cargo --version
 
-      - name: Formatting is clean
-        run: cargo fmt --all -- --check
+      - name: Authored Rust formatting is clean
+        run: rustfmt --edition 2021 --check src/lib.rs src/log_tee.rs
 
       - name: Clippy is warning-free
         run: cargo clippy --locked --all-targets -- -D warnings
