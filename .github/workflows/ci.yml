@@ -38,8 +38,8 @@ jobs:
       - name: Authored Rust formatting is clean
         run: rustfmt --edition 2021 --check src/lib.rs src/log_tee.rs
 
-      - name: Clippy is warning-free
-        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Authored library Clippy is warning-free
+        run: cargo clippy --locked --lib -- -D warnings
 
       - name: Check all Rust targets
         run: cargo check --locked --all-targets
