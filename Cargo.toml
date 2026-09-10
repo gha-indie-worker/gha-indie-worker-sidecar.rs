@@ -17,7 +17,8 @@ path = "src/main.rs"
 
 [dependencies]
 gha-indie-worker-interfaces = { git = "https://github.com/gha-indie-worker/gha-indie-worker-interfaces", rev = "7165a361462e624195e91cf88ec472b7d6e9c1da" }
-ores-otel-sidecar = { git = "https://github.com/ores-otel/ores-otel-sidecar.rs", rev = "89d1eb9cf2fc5e6c593da569fe71adf391bd0571" }
+ores-otel-sidecar = { git = "https://github.com/ores-otel/ores-otel-sidecar.rs", rev = "aad578349dd546445e5fda2f20b9310a72fa1f23" }
+serde_json = "1"
 
 [lints.rust]
 unsafe_code = "forbid"
