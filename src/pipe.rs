@@ -9,6 +9,9 @@ use gha_indie_worker_interfaces::{
     BuildLogEvent, BuildLogMetadata, BuildLogStream, BUILD_LOG_METADATA_SCHEMA_VERSION,
     DEFAULT_DATA_FD, DEFAULT_METADATA_FD,
 };
+use ores_otel_sidecar::receiver::{
+    self as shared_receiver, ReceiverError as SharedReceiverError, ReceiverLimits,
+};
 
 pub(crate) const PROTOCOL: &str = "gha-indie-worker.log-sidecar.v1";
 pub(crate) const BUILD_LOG_PROTOCOL: &str = BUILD_LOG_METADATA_SCHEMA_VERSION;
@@ -39,6 +42,19 @@ pub(crate) fn run_if_requested() -> io::Result<bool> {
 
 fn invalid_data(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn shared_receiver_error(error: SharedReceiverError) -> io::Error {
+    match error {
+        SharedReceiverError::Io(error) => error,
+        SharedReceiverError::TruncatedMetadata | SharedReceiverError::TruncatedData { .. } => {
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated shared receiver frame",
+            )
+        }
+        _ => invalid_data("build-log transport failed shared receiver admission"),
+    }
 }
 
 fn parse_fd(name: &str, default_fd: i32) -> io::Result<u32> {
@@ -141,56 +157,37 @@ where
     O: Write,
     E: Write,
 {
+    let limits = ReceiverLimits {
+        max_metadata_line_bytes: MAX_METADATA_LINE_BYTES,
+        max_data_chunk_bytes: MAX_FRAME_BYTES,
+    };
     let mut metadata_reader = BufReader::new(metadata_reader);
-    let mut line = Vec::new();
     let mut stats = CopyStats::default();
+
     loop {
-        line.clear();
-        let read = metadata_reader.read_until(b'\n', &mut line)?;
-        if read == 0 {
+        let Some(metadata_value) = shared_receiver::receive_metadata(&mut metadata_reader, limits)
+            .map_err(shared_receiver_error)?
+        else {
             return Ok(stats);
-        }
-        if line.len() > MAX_METADATA_LINE_BYTES {
-            return Err(invalid_data("build-log metadata line exceeds maximum size"));
-        }
-        if !line.ends_with(b"\n") {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "truncated build-log metadata line",
-            ));
-        }
-        let text = std::str::from_utf8(&line)
-            .map_err(|_| invalid_data("build-log metadata must be UTF-8 JSON"))?;
-        let metadata = BuildLogMetadata::parse_json_line(text)
+        };
+
+        // Transport framing is shared with ores-otel, but the product contract
+        // remains authoritative here. Unknown/credential-like fields, wrong
+        // versions, invalid event shapes, and the TJSV-backed projection must
+        // all fail before FD4 advances.
+        let metadata = serde_json::from_value::<BuildLogMetadata>(metadata_value.clone())
+            .map_err(|_| invalid_data("build-log metadata failed contract validation"))?
+            .validate()
             .map_err(|_| invalid_data("build-log metadata failed contract validation"))?;
 
-        // FD3 is a control-plane lane. Do not echo metadata into stdout/stderr:
-        // those output lanes must contain only the exact bytes read from FD4.
         match metadata.event {
             BuildLogEvent::Chunk => {
                 if metadata.stream == BuildLogStream::Worker {
                     return Err(invalid_data("worker stream cannot carry raw log chunks"));
                 }
-                let frame_len = usize::try_from(metadata.byte_length)
-                    .map_err(|_| invalid_data("invalid build-log byte length"))?;
-                if frame_len == 0 || frame_len > MAX_FRAME_BYTES {
+                if metadata.byte_length == 0 || metadata.byte_length as usize > MAX_FRAME_BYTES {
                     return Err(invalid_data("build-log chunk exceeds receiver bounds"));
                 }
-                let mut payload = vec![0_u8; frame_len];
-                data_reader.read_exact(&mut payload)?;
-                match metadata.stream {
-                    BuildLogStream::Stdout => {
-                        stdout.write_all(&payload)?;
-                        stdout.flush()?;
-                    }
-                    BuildLogStream::Stderr => {
-                        stderr.write_all(&payload)?;
-                        stderr.flush()?;
-                    }
-                    BuildLogStream::Worker => unreachable!(),
-                }
-                stats.frames = stats.frames.saturating_add(1);
-                stats.bytes = stats.bytes.saturating_add(frame_len as u64);
             }
             BuildLogEvent::Dropped => {
                 if metadata.stream != BuildLogStream::Worker || metadata.byte_length != 0 {
@@ -202,6 +199,25 @@ where
                     return Err(invalid_data("lifecycle event cannot claim raw data bytes"));
                 }
             }
+        }
+
+        let payload = shared_receiver::receive_data(&mut data_reader, &metadata_value, limits)
+            .map_err(shared_receiver_error)?;
+
+        if metadata.event == BuildLogEvent::Chunk {
+            match metadata.stream {
+                BuildLogStream::Stdout => {
+                    stdout.write_all(&payload)?;
+                    stdout.flush()?;
+                }
+                BuildLogStream::Stderr => {
+                    stderr.write_all(&payload)?;
+                    stderr.flush()?;
+                }
+                BuildLogStream::Worker => unreachable!(),
+            }
+            stats.frames = stats.frames.saturating_add(1);
+            stats.bytes = stats.bytes.saturating_add(payload.len() as u64);
         }
     }
 }
@@ -316,14 +332,15 @@ mod tests {
     }
 
     #[test]
-    fn contract_rejects_unknown_or_credential_fields() {
+    fn contract_rejects_unknown_or_credential_fields_before_data() {
         let credential = format!(
             "{{\"schemaVersion\":\"{BUILD_LOG_PROTOCOL}\",\"event\":\"chunk\",\"jobId\":\"build-1\",\"stream\":\"stdout\",\"sequence\":1,\"byteLength\":1,\"timestamp\":\"2026-09-09T19:45:00Z\",\"accessToken\":\"forbidden\"}}\n"
         );
+        let mut data = Cursor::new(b"x".to_vec());
         assert_eq!(
             copy_contract_streams(
                 Cursor::new(credential.into_bytes()),
-                Cursor::new(b"x"),
+                &mut data,
                 Vec::new(),
                 Vec::new()
             )
@@ -331,15 +348,17 @@ mod tests {
             .kind(),
             io::ErrorKind::InvalidData
         );
+        assert_eq!(data.position(), 0);
     }
 
     #[test]
-    fn contract_rejects_wrong_version_and_oversized_chunk() {
+    fn contract_rejects_wrong_version_and_oversized_chunk_before_data() {
         let wrong_version = "{\"schemaVersion\":\"gha-indie-worker.build-log-metadata/v0\",\"event\":\"chunk\",\"jobId\":\"build-1\",\"stream\":\"stdout\",\"sequence\":1,\"byteLength\":1,\"timestamp\":\"2026-09-09T19:45:00Z\"}\n";
+        let mut wrong_version_data = Cursor::new(b"x".to_vec());
         assert_eq!(
             copy_contract_streams(
                 Cursor::new(wrong_version.as_bytes()),
-                Cursor::new(b"x"),
+                &mut wrong_version_data,
                 Vec::new(),
                 Vec::new()
             )
@@ -347,12 +366,14 @@ mod tests {
             .kind(),
             io::ErrorKind::InvalidData
         );
+        assert_eq!(wrong_version_data.position(), 0);
 
         let oversized = contract_line("chunk", "stdout", 1, (MAX_FRAME_BYTES as u32) + 1);
+        let mut oversized_data = Cursor::new(b"never-read".to_vec());
         assert_eq!(
             copy_contract_streams(
                 Cursor::new(oversized.into_bytes()),
-                Cursor::new(Vec::<u8>::new()),
+                &mut oversized_data,
                 Vec::new(),
                 Vec::new()
             )
@@ -360,6 +381,7 @@ mod tests {
             .kind(),
             io::ErrorKind::InvalidData
         );
+        assert_eq!(oversized_data.position(), 0);
     }
 
     #[test]
@@ -395,12 +417,13 @@ mod tests {
     }
 
     #[test]
-    fn contract_requires_worker_drop_receipts_and_zero_lifecycle_bytes() {
+    fn contract_requires_worker_drop_receipts_and_zero_lifecycle_bytes_before_data() {
         let invalid_drop = contract_line("dropped", "stdout", 1, 0);
+        let mut drop_data = Cursor::new(b"untouched".to_vec());
         assert_eq!(
             copy_contract_streams(
                 Cursor::new(invalid_drop.into_bytes()),
-                Cursor::new(Vec::<u8>::new()),
+                &mut drop_data,
                 Vec::new(),
                 Vec::new()
             )
@@ -408,12 +431,14 @@ mod tests {
             .kind(),
             io::ErrorKind::InvalidData
         );
+        assert_eq!(drop_data.position(), 0);
 
         let lifecycle_with_data = contract_line("stream_closed", "stdout", 2, 1);
+        let mut lifecycle_data = Cursor::new(b"x".to_vec());
         assert_eq!(
             copy_contract_streams(
                 Cursor::new(lifecycle_with_data.into_bytes()),
-                Cursor::new(b"x"),
+                &mut lifecycle_data,
                 Vec::new(),
                 Vec::new()
             )
@@ -421,6 +446,7 @@ mod tests {
             .kind(),
             io::ErrorKind::InvalidData
         );
+        assert_eq!(lifecycle_data.position(), 0);
     }
 
     #[test]
