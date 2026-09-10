@@ -50,6 +50,7 @@ version = "0.1.0"
 dependencies = [
  "gha-indie-worker-interfaces",
  "ores-otel-sidecar",
+ "serde_json",
 ]
 
 [[package]]
@@ -92,7 +93,7 @@ checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
 [[package]]
 name = "ores-otel-sidecar"
 version = "0.1.0"
-source = "git+https://github.com/ores-otel/ores-otel-sidecar.rs?rev=89d1eb9cf2fc5e6c593da569fe71adf391bd0571#89d1eb9cf2fc5e6c593da569fe71adf391bd0571"
+source = "git+https://github.com/ores-otel/ores-otel-sidecar.rs?rev=aad578349dd546445e5fda2f20b9310a72fa1f23#aad578349dd546445e5fda2f20b9310a72fa1f23"
 dependencies = [
  "flags2env",
  "serde",
