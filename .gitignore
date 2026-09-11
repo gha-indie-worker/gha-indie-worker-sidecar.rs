@@ -3,3 +3,7 @@
 .env
 .env.*
 !.env.example
+
+# Local temporary directories and repository-owned worktrees
+tmp/
+temp/
